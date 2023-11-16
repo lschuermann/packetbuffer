@@ -5,26 +5,58 @@ use core::marker::PhantomData;
 /// (linked list). Generic over whether it is `CONTIGUOUS`, its guaranteed
 /// headroom reservation `HDR_RSV`, and the list's tail type.
 trait PacketBuffer<const CONTIGUOUS: bool, const HDR_RSV: usize> {
+    type ShrunkOut<const NEW_HDR_RSV: usize>;
+
     fn len(&self) -> usize;
+    fn shrink_headroom<
+	's,
+	const NEW_HDR_RSV: usize,
+	>(
+	s: &'s mut Self,
+    ) -> &'s mut Self::ShrunkOut<NEW_HDR_RSV>;
 }
 
-impl<
-        const CONTIGUOUS: bool,
-        const HDR_RSV: usize,
-        T: PacketBuffer<CONTIGUOUS, HDR_RSV> + ?Sized,
-    > PacketBuffer<CONTIGUOUS, HDR_RSV> for &T
-{
-    fn len(&self) -> usize {
-	(*self).len()
-    }
-}
+
+// impl<
+//         const CONTIGUOUS: bool,
+//         const HDR_RSV: usize,
+//         T: PacketBuffer<CONTIGUOUS, HDR_RSV> + ?Sized,
+//     > PacketBuffer<CONTIGUOUS, HDR_RSV> for &T
+// {
+//     type ShrunkOut<const NEW_HDR_RSV: usize> = T::ShrunkOut<NEW_HDR_RSV>;
+
+//     fn len(&self) -> usize {
+// 	(*self).len()
+//     }
+
+//     fn shrink_headroom<
+// 	's,
+// 	const NEW_HDR_RSV: usize,
+// 	>(
+// 	s: &'s mut Self,
+//     ) -> &'s mut Self::ShrunkOut<NEW_HDR_RSV> {
+// 	T::shrink_headroom::<NEW_HDR_RSV>(s)
+//     }
+// }
 
 /// Dummy type denoting the end of a `PacketBuffer` chain. Cannot hold any data,
 /// always contiguous, zero headroom reservation.
 struct PacketBufferEnd;
 impl PacketBuffer<true, 0> for PacketBufferEnd {
+    type ShrunkOut<const NEW_HDR_RSV: usize> = PacketBufferEnd;
+
     fn len(&self) -> usize {
 	0
+    }
+
+    fn shrink_headroom<
+	's,
+	const NEW_HDR_RSV: usize,
+	>(
+	s: &'s mut Self,
+    ) -> &'s mut Self::ShrunkOut<NEW_HDR_RSV> {
+	let _: () = assert!(NEW_HDR_RSV == 0);
+	s
     }
 }
 impl PacketBufferEnd {
@@ -81,8 +113,20 @@ struct PacketSlice<
 impl<'a, 'b, const HDR_RSV: usize, S: PacketSliceTy<'a>> PacketBuffer<true, HDR_RSV>
     for PacketSlice<'a, 'b, true, HDR_RSV, true, 0, S, PacketBufferEnd>
 {
+    type ShrunkOut<const NEW_HDR_RSV: usize> = PacketSlice<'a, 'b, true, NEW_HDR_RSV, true, 0, S, PacketBufferEnd>;
+
     fn len(&self) -> usize {
 	self.slice.len() + self.next.len()
+    }
+
+    fn shrink_headroom<
+	's,
+	const NEW_HDR_RSV: usize,
+	>(
+	s: &'s mut Self,
+    ) -> &'s mut Self::ShrunkOut<NEW_HDR_RSV> {
+	let _: () = assert!(HDR_RSV >= NEW_HDR_RSV);
+	unsafe { core::mem::transmute(s) }
     }
 }
 
@@ -101,8 +145,20 @@ impl<
     > PacketBuffer<false, HDR_RSV>
     for PacketSlice<'a, 'b, false, HDR_RSV, NEXT_CONTIGUOUS, NEXT_HDR_RSV, S, N>
 {
+    type ShrunkOut<const NEW_HDR_RSV: usize> = PacketSlice<'a, 'b, false, NEW_HDR_RSV, NEXT_CONTIGUOUS, NEXT_HDR_RSV, S, N>;
+
     fn len(&self) -> usize {
 	self.slice.len() + self.next.len()
+    }
+
+    fn shrink_headroom<
+	's,
+	const NEW_HDR_RSV: usize,
+	>(
+	s: &'s mut Self,
+    ) -> &'s mut Self::ShrunkOut<NEW_HDR_RSV> {
+	let _: () = assert!(HDR_RSV >= NEW_HDR_RSV);
+	unsafe { core::mem::transmute(s) }
     }
 }
 
@@ -118,49 +174,49 @@ impl<'a, const HDR_RSV: usize>
     }
 }
 
-trait ResizePacketBufferHeadroom<
-	const CONTIGUOUS: bool,
-	const HDR_RSV: usize,
-	PB: PacketBuffer<CONTIGUOUS, HDR_RSV> + ?Sized
-> {
-    /// Support shrinking the packet slice headroom.
-    fn shrink_packet_slice_headroom<
-	    'a,
-	'b,
-	's,
-	// const CONTIGUOUS: bool,
-	const NEW_HDR_RSV: usize,
-	// const HDR_RSV: usize,
-	const NEXT_CONTIGUOUS: bool,
-	const NEXT_HDR_RSV: usize,
-	P: PacketSliceTy<'a>,
-	N: PacketBuffer<NEXT_CONTIGUOUS, NEXT_HDR_RSV> + 'b,
-	>(
-	s: &'s mut PacketSlice<'a, 'b, CONTIGUOUS, HDR_RSV, NEXT_CONTIGUOUS, NEXT_HDR_RSV, P, N>,
-    ) -> &'s mut PacketSlice<'a, 'b, CONTIGUOUS, NEW_HDR_RSV, NEXT_CONTIGUOUS, NEXT_HDR_RSV, P, N> {
-	let _: () = assert!(HDR_RSV >= NEW_HDR_RSV);
-	unsafe { core::mem::transmute(s) }
-    }
-}
+// trait ResizePacketBufferHeadroom<
+// 	const CONTIGUOUS: bool,
+// 	const HDR_RSV: usize,
+// 	PB: PacketBuffer<CONTIGUOUS, HDR_RSV> + ?Sized
+// > {
+//     /// Support shrinking the packet slice headroom.
+//     fn shrink_packet_slice_headroom<
+// 	    'a,
+// 	'b,
+// 	's,
+// 	// const CONTIGUOUS: bool,
+// 	const NEW_HDR_RSV: usize,
+// 	// const HDR_RSV: usize,
+// 	const NEXT_CONTIGUOUS: bool,
+// 	const NEXT_HDR_RSV: usize,
+// 	P: PacketSliceTy<'a>,
+// 	N: PacketBuffer<NEXT_CONTIGUOUS, NEXT_HDR_RSV> + 'b,
+// 	>(
+// 	s: &'s mut PacketSlice<'a, 'b, CONTIGUOUS, HDR_RSV, NEXT_CONTIGUOUS, NEXT_HDR_RSV, P, N>,
+//     ) -> &'s mut PacketSlice<'a, 'b, CONTIGUOUS, NEW_HDR_RSV, NEXT_CONTIGUOUS, NEXT_HDR_RSV, P, N> {
+// 	let _: () = assert!(HDR_RSV >= NEW_HDR_RSV);
+// 	unsafe { core::mem::transmute(s) }
+//     }
+// }
 
-/// Support shrinking the packet slice headroom.
-fn shrink_packet_slice_headroom<
-    'a,
-    'b,
-    's,
-    const CONTIGUOUS: bool,
-    const NEW_HDR_RSV: usize,
-    const HDR_RSV: usize,
-    const NEXT_CONTIGUOUS: bool,
-    const NEXT_HDR_RSV: usize,
-    P: PacketSliceTy<'a>,
-    N: PacketBuffer<NEXT_CONTIGUOUS, NEXT_HDR_RSV> + 'b,
->(
-    s: &'s mut PacketSlice<'a, 'b, CONTIGUOUS, HDR_RSV, NEXT_CONTIGUOUS, NEXT_HDR_RSV, P, N>,
-) -> &'s mut PacketSlice<'a, 'b, CONTIGUOUS, NEW_HDR_RSV, NEXT_CONTIGUOUS, NEXT_HDR_RSV, P, N> {
-    let _: () = assert!(HDR_RSV >= NEW_HDR_RSV);
-    unsafe { core::mem::transmute(s) }
-}
+// /// Support shrinking the packet slice headroom.
+// fn shrink_packet_slice_headroom<
+//     'a,
+//     'b,
+//     's,
+//     const CONTIGUOUS: bool,
+//     const NEW_HDR_RSV: usize,
+//     const HDR_RSV: usize,
+//     const NEXT_CONTIGUOUS: bool,
+//     const NEXT_HDR_RSV: usize,
+//     P: PacketSliceTy<'a>,
+//     N: PacketBuffer<NEXT_CONTIGUOUS, NEXT_HDR_RSV> + 'b,
+// >(
+//     s: &'s mut PacketSlice<'a, 'b, CONTIGUOUS, HDR_RSV, NEXT_CONTIGUOUS, NEXT_HDR_RSV, P, N>,
+// ) -> &'s mut PacketSlice<'a, 'b, CONTIGUOUS, NEW_HDR_RSV, NEXT_CONTIGUOUS, NEXT_HDR_RSV, P, N> {
+//     let _: () = assert!(HDR_RSV >= NEW_HDR_RSV);
+//     unsafe { core::mem::transmute(s) }
+// }
 
 /// Support the headroom up to the entire packetbuffer's length.
 // fn restore_packet_slice_headroom<
@@ -267,18 +323,45 @@ struct PacketArr<
 
 impl<const LEN: usize> PacketBuffer<true, 0>
     for PacketArr<'static, true, LEN, true, 0, PacketBufferEnd>
-{
+    {
+
+	type ShrunkOut<const NEW_HDR_RSV: usize> = Self;
+	
     fn len(&self) -> usize {
 	self.arr.len() + self.next.len()
     }
+
+	    fn shrink_headroom<
+	's,
+	const NEW_HDR_RSV: usize,
+	>(
+	s: &'s mut Self,
+    ) -> &'s mut Self::ShrunkOut<NEW_HDR_RSV> {
+	let _: () = assert!(0 >= NEW_HDR_RSV);
+	unsafe { core::mem::transmute(s) }
+    }
+
 }
 
 impl<const LEN: usize> PacketBuffer<false, 0>
     for PacketArr<'static, true, LEN, true, 0, PacketBufferEnd>
-{
+    {
+	type ShrunkOut<const NEW_HDR_RSV: usize> = Self;
+
     fn len(&self) -> usize {
 	self.arr.len() + self.next.len()
     }
+
+        fn shrink_headroom<
+	's,
+	const NEW_HDR_RSV: usize,
+	>(
+	s: &'s mut Self,
+    ) -> &'s mut Self::ShrunkOut<NEW_HDR_RSV> {
+	let _: () = assert!(0 >= NEW_HDR_RSV);
+	unsafe { core::mem::transmute(s) }
+    }
+
 }
 
 impl<
@@ -289,8 +372,20 @@ impl<
         N: PacketBuffer<NEXT_CONTIGUOUS, NEXT_HDR_RSV> + 'b,
     > PacketBuffer<false, 0> for PacketArr<'b, false, LEN, NEXT_CONTIGUOUS, NEXT_HDR_RSV, N>
 {
+    type ShrunkOut<const NEW_HDR_RSV: usize> = Self;
+
     fn len(&self) -> usize {
 	self.arr.len() + self.next.len()
+    }
+
+    fn shrink_headroom<
+	's,
+	const NEW_HDR_RSV: usize,
+	>(
+	s: &'s mut Self,
+    ) -> &'s mut Self::ShrunkOut<NEW_HDR_RSV> {
+	let _: () = assert!(0 >= NEW_HDR_RSV);
+	unsafe { core::mem::transmute(s) }
     }
 }
 
@@ -349,8 +444,8 @@ mod tests {
 
     #[test]
     fn test_types() {
-	fn send<'a, PB: PacketBuffer<true, 12> + 'a>(buffer: PB) {}
-	fn accept_dyn_pb(_pb: &mut dyn PacketBuffer<true, 0>) {}
+	// fn send<'a, PB: PacketBuffer<true, 12> + 'a>(buffer: PB) {}
+	// fn accept_dyn_pb(_pb: &mut dyn PacketBuffer<true, 0>) {}
 
         let empty_pb = PacketBufferEnd::new();
 
@@ -360,10 +455,10 @@ mod tests {
         );
 
         let hdr_mut_pb_resized: &mut PacketSlice<'_, '_, true, 16, true, 0, _, _> =
-            shrink_packet_slice_headroom(&mut hdr_mut_pb);
+            PacketBuffer::shrink_headroom(&mut hdr_mut_pb);
 
-        let arr_next_pb: PacketArr<'_, false, 12, true, 16, &dyn PacketBuffer<true, 16>> =
-            PacketArr::from_arr([0; 12], hdr_mut_pb_resized);
+        // let arr_next_pb: PacketArr<'_, false, 12, true, 16, &dyn PacketBuffer<true, 16>> =
+        //     PacketArr::from_arr([0; 12], hdr_mut_pb_resized);
     }
 
     struct ImANetworkLayer<
@@ -421,8 +516,8 @@ mod tests {
 	NPB: PacketBuffer<CONTIGUOUS, NETWORK_LAYER_HEADROOM> + ?Sized,
 	    HPB: PacketBuffer<CONTIGUOUS, HIGHER_LAYER_HEADROOM> + ?Sized
     >  ImAHigherLayerAdaptor<CONTIGUOUS, NETWORK_LAYER_HEADROOM, HIGHER_LAYER_HEADROOM, NPB, HPB> {
-	fn dispatch_buffer(buf: &'static mut HPB) {
-	    // self.network_layer.dispatch_buffer(ResizePacketBufferHeadroom::shrink_packet_slice_headroom(buf))
+	fn dispatch_buffer(&self, buf: &'static mut HPB) {
+	    self.network_layer.dispatch_buffer(PacketBuffer::shrink_headroom(buf))
 	}
     }
 
